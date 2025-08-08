@@ -8,10 +8,10 @@ weight=$(jq -r '.weight' data.json)
 type=$(jq -r '.types[0].type.name' data.json | sed 's/.*/\u&/')
 
 # Height in decimeters to meters (divide by 10)
-height_meters=$(awk "BEGIN {printf \"%.1f\", $height/10}")
+formatted_height=$(awk "BEGIN {printf \"%.1f\", $height/10}")
 
 # Weight in hectograms to kilograms (divide by 10)
-weight_kgs=$(awk "BEGIN {printf \"%d\", $weight/10}")
+formatted_weight=$(awk "BEGIN {printf \"%d\", $weight/10}")
 
 # Format the output exactly
-echo "$name is of type $type, weighs ${weight_kgs}kg, and is ${height_meters}m tall."
+echo "$name is of type $type, weighs ${formatted_weight}kg, and is ${formatted_height}m tall."

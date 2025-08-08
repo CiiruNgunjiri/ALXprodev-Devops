@@ -1,48 +1,105 @@
 #!/bin/bash
 
-# Directory to save the JSON files
 output_dir="pokemon_data"
 mkdir -p "$output_dir"
 
-# List of Pokémon to fetch in parallel
 pokemon_list=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
-
-# Base URL of the Pokemon API
 base_url="https://pokeapi.co/api/v2/pokemon"
+timeout=10  # seconds
 
-# Delay between retries if needed (not used here, but can be added)
-# delay=1
+msg_file=$(mktemp)
+declare -A pids_start
+declare -a pids
+declare -a monitors_pids
 
-# Function to fetch one Pokemon data with error checking
+# Cleanup trap to kill all running jobs on SIGINT
+cleanup() {
+  echo -e "\nReceived interrupt, killing all background jobs..."
+  for pid in "${pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid"
+      echo "Killed PID $pid"
+    fi
+  done
+  for mpid in "${monitors_pids[@]}"; do
+    if kill -0 "$mpid" 2>/dev/null; then
+      kill "$mpid"
+      echo "Killed monitor PID $mpid"
+    fi
+  done
+  rm -f "$msg_file"
+  exit 1
+}
+trap cleanup SIGINT
+
 fetch_pokemon() {
-  local pokemon=$1
+  local pokemon="$1"
   local output_file="$output_dir/${pokemon}.json"
+  local tmp_http_file=$(mktemp)
 
   echo "Fetching data for $pokemon..."
 
-  # Fetch data
-  http_code=$(curl -s -w "%{http_code}" -o "$output_file" "$base_url/$pokemon")
+  # Run curl, redirect output JSON to file and HTTP status to a temp file
+  curl -s -w "%{http_code}" -o "$output_file" "$base_url/$pokemon" > "$tmp_http_file" &
+  local pid=$!
+  pids+=($pid)
+  pids_start[$pid]=$(date +%s)
 
-  if [ "$http_code" -eq 200 ]; then
-    echo "Saved data to $output_file ✅"
+  # Timeout monitor in background for this curl pid
+  (
+    while kill -0 "$pid" 2>/dev/null; do
+      now=$(date +%s)
+      elapsed=$((now - pids_start[$pid]))
+      if (( elapsed > timeout )); then
+        echo "Timeout reached for $pokemon (PID $pid). Killing process..." >> "$msg_file"
+        kill "$pid"
+        rm -f "$output_file"
+        break
+      fi
+      sleep 1
+    done
+  ) &
+  local monitor_pid=$!
+  monitors_pids+=($monitor_pid)
+
+  # Wait for curl to finish and get exit code
+  wait "$pid"
+  local exit_code=$?
+
+  # Wait for monitor process to finish to avoid orphan
+  wait "$monitor_pid"
+
+  # Safely read the HTTP code from temp file
+  local http_code
+  http_code=$(<"$tmp_http_file")
+  rm -f "$tmp_http_file"
+
+  if [ $exit_code -eq 0 ]; then
+    if [[ "$http_code" -eq 200 ]]; then
+      echo "Saved data to $output_file ✅" >> "$msg_file"
+    else
+      echo "Failed to fetch data for $pokemon (HTTP status: $http_code)" >> "$msg_file"
+      rm -f "$output_file"
+    fi
   else
-    echo "Failed to fetch data for $pokemon (HTTP status: $http_code)"
+    # Curl was killed or exited with error
+    echo "Failed to fetch data for $pokemon (curl exited with code $exit_code)" >> "$msg_file"
     rm -f "$output_file"
   fi
 }
 
-# Array to keep track of background job PIDs
-pids=()
-
-# Start fetching all Pokemon in background
+# Start all fetches in background
 for pokemon in "${pokemon_list[@]}"; do
   fetch_pokemon "$pokemon" &
-  pids+=($!)
 done
 
-# Wait for all background jobs to complete
-for pid in "${pids[@]}"; do
-  wait "$pid"
-done
+# Wait for all fetches (curl) to finish
+wait
+
+# At this point, all curl and monitor processes are done, no orphan left
+
+# Print accumulated messages
+cat "$msg_file"
+rm "$msg_file"
 
 echo "All fetches completed."
