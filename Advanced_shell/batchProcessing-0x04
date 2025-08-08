@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# Directory to save the JSON files
+output_dir="pokemon_data"
+mkdir -p "$output_dir"
+
+# List of Pokémon to fetch in parallel
+pokemon_list=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
+
+# Base URL of the Pokemon API
+base_url="https://pokeapi.co/api/v2/pokemon"
+
+# Delay between retries if needed (not used here, but can be added)
+# delay=1
+
+# Function to fetch one Pokemon data with error checking
+fetch_pokemon() {
+  local pokemon=$1
+  local output_file="$output_dir/${pokemon}.json"
+
+  echo "Fetching data for $pokemon..."
+
+  # Fetch data
+  http_code=$(curl -s -w "%{http_code}" -o "$output_file" "$base_url/$pokemon")
+
+  if [ "$http_code" -eq 200 ]; then
+    echo "Saved data to $output_file ✅"
+  else
+    echo "Failed to fetch data for $pokemon (HTTP status: $http_code)"
+    rm -f "$output_file"
+  fi
+}
+
+# Array to keep track of background job PIDs
+pids=()
+
+# Start fetching all Pokemon in background
+for pokemon in "${pokemon_list[@]}"; do
+  fetch_pokemon "$pokemon" &
+  pids+=($!)
+done
+
+# Wait for all background jobs to complete
+for pid in "${pids[@]}"; do
+  wait "$pid"
+done
+
+echo "All fetches completed."

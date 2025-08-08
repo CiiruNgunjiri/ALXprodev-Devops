@@ -1,0 +1,50 @@
+#!/bin/bash
+
+# Directory to save the JSON files
+output_dir="pokemon_data"
+mkdir -p "$output_dir"
+
+# List of Pokémon to fetch
+pokemon_list=("bulbasaur" "ivysaur" "venusaur" "charmander" "charmeleon")
+
+# Base URL of the Pokemon API
+base_url="https://pokeapi.co/api/v2/pokemon"
+
+# Delay in seconds between requests to avoid rate limiting
+delay=1
+
+# Maximum number of retries per Pokémon
+max_retries=3
+
+for pokemon in "${pokemon_list[@]}"; do
+  echo "Fetching data for $pokemon..."
+
+  output_file="$output_dir/${pokemon}.json"
+
+  attempt=1
+  success=false
+
+  while [ "$attempt" -le "$max_retries" ]; do
+    # Perform the API request
+    http_code=$(curl -s -w "%{http_code}" -o "$output_file" "$base_url/$pokemon")
+
+    if [ "$http_code" -eq 200 ]; then
+      echo "Saved data to $output_file ✅"
+      success=true
+      break
+    else
+      echo "Attempt $attempt/$max_retries failed for $pokemon (HTTP status: $http_code). Retrying..."
+      ((attempt++))
+      sleep $delay
+    fi
+  done
+
+  if ! $success; then
+    echo "Failed to fetch data for $pokemon after $max_retries attempts. Logging error."
+    echo "$(date): Failed to fetch $pokemon (HTTP status: $http_code)" >> errors.log
+    rm -f "$output_file"
+  fi
+
+  # Delay before next Pokémon retrieval
+  sleep $delay
+done
